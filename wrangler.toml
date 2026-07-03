@@ -1,0 +1,28 @@
+name = "cid-safety-dashboard"
+main = "src/worker.js"
+compatibility_date = "2026-07-01"
+
+# Camera snapshots are now captured by a separate GitHub Actions workflow
+# (see .github/workflows/camera-snapshots.yml) since Workers can't run ffmpeg
+# to pull stills from SDOT's HLS video streams. This Worker only needs the
+# daily data pull for crime / Terry Stops / Calls-for-Service.
+[triggers]
+crons = ["0 13 * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "cid_safety"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+
+[[r2_buckets]]
+binding = "CAMERA_SNAPSHOTS"
+bucket_name = "cid-camera-snapshots"
+
+[vars]
+# Crime dataset no longer publishes MCPP (confirmed blank as of this build) —
+# filtering by beat everywhere instead, same as Terry Stops / Calls for Service.
+CID_BEATS = "K3"
+
+# Promise-tracker anchor dates (see README for sourcing)
+PROMISE_1_DATE = "2026-02-17"   # State of the City: restore late-night SPD presence in CID
+PROMISE_2_DATE = "2026-06-18"   # 12th & Jackson enforcement + LEAD + $1.1M outreach funding

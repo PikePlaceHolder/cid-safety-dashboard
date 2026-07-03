@@ -1,0 +1,34 @@
+name: Capture camera snapshots
+
+on:
+  schedule:
+    # Hourly at :05. To switch to daily, replace with e.g. "5 13 * * *"
+    # (13:00 UTC ~ 6am Seattle, matching the Worker's daily data pull).
+    # Rough cost: hourly x 6 cameras is well within GitHub's free minutes on
+    # a public repo; on a private repo budget for ~2000 free min/month and
+    # watch usage under Settings > Billing if you keep it hourly.
+    - cron: "5 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure ffmpeg, jq, aws-cli are present
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ffmpeg jq
+          aws --version || (curl -sS "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip \
+            && unzip -q awscliv2.zip && sudo ./aws/install)
+
+      - name: Capture frames and upload to R2 + D1
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_D1_DATABASE_ID: ${{ secrets.CF_D1_DATABASE_ID }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: cid-camera-snapshots
+        run: bash scripts/capture-snapshots.sh

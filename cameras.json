@@ -1,0 +1,51 @@
+[
+  {
+    "id": "CMR-0428",
+    "name": "5th_Ave_S_and_S_Jackson_St",
+    "type": "sdot",
+    "slug": "5_S_Jackson",
+    "lat": 47.5992625601249,
+    "lon": -122.327664584652
+  },
+  {
+    "id": "CMR-0306",
+    "name": "S_Jackson_St_and_Maynard_Ave_S",
+    "type": "sdot",
+    "slug": "Maynard_S_Jackson_EW",
+    "lat": 47.5991907580923,
+    "lon": -122.325055208023
+  },
+  {
+    "id": "CMR-0193",
+    "name": "12th_Ave_S_and_S_Jackson_St",
+    "type": "sdot",
+    "slug": "12_S_Jackson",
+    "lat": 47.5991890635057,
+    "lon": -122.317222846502
+  },
+  {
+    "id": "CMR-0053",
+    "name": "5th_Ave_S_and_S_Dearborn_St",
+    "type": "sdot",
+    "slug": "5_S_Dearborn",
+    "lat": 47.595794048079,
+    "lon": -122.327683359293
+  },
+  {
+    "id": "CMR-0427",
+    "name": "4th_Ave_S_and_S_Weller_St",
+    "type": "sdot",
+    "slug": "4_S_Weller",
+    "lat": 47.5976010613694,
+    "lon": -122.328961251749
+  },
+  {
+    "id": "I5Yesler",
+    "name": "I-5_at_Yesler_St",
+    "type": "wsdot",
+    "slug": "005vc16511.jpg",
+    "lat": 47.6017561042129,
+    "lon": -122.325411820413,
+    "note": "Nearest freeway-adjacent camera to the corridor; not directly over Dearborn/Weller"
+  }
+]
