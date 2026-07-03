@@ -7,12 +7,17 @@ on:
     # saving (PDT, roughly Mar-Nov), so local 00:00/03:00/06:00/... maps to
     # UTC 07:00/10:00/13:00/.... Once PST (UTC-8) kicks in for the winter,
     # this will drift an hour later than local midnight — revisit then if it
-    # matters. To switch to daily, replace with e.g. "0 13 * * *" (13:00 UTC
+    # matters. To switch to daily, replace with e.g. "8 13 * * *" (13:00 UTC
     # ~ 6am Seattle, matching the Worker's daily data pull).
     # Rough cost: 8x/day x 6 cameras is well within GitHub's free minutes on
     # a public repo; on a private repo budget for ~2000 free min/month and
     # watch usage under Settings > Billing.
-    - cron: "0 1-23/3 * * *"
+    # Minute offset (:08, not :00): GitHub's own docs warn schedule events
+    # "can be delayed during periods of high loads... high load times
+    # include the start of every hour" — every repo scheduling at :00 piles
+    # up at once. Confirmed the hard way: the :00 schedule never fired at
+    # all in this repo's first ~15+ min window.
+    - cron: "8 1-23/3 * * *"
   workflow_dispatch: {}
 
 jobs:
