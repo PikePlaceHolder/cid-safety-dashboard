@@ -76,12 +76,13 @@ function isOnview(callTypeIndicator, initialCallType) {
 
 // ---- Daily pull: crime + Terry stops + CFS ---------------------------------
 
-async function pullCrimeData(env) {
+async function pullCrimeData(env, sinceDate) {
   // Crime dataset dropped MCPP from its published fields — beat is now the
   // only reliable geography filter across all three SPD datasets.
   const beats = (env.CID_BEATS || "").split(",").map((b) => b.trim()).filter(Boolean);
   if (!beats.length) return 0;
   const beatClause = beats.map((b) => `'${b}'`).join(",");
+  const since = sinceDate ?? daysAgoISO(7);
 
   let rows;
   try {
@@ -91,7 +92,7 @@ async function pullCrimeData(env) {
         // TODO verify: confirmed live 2026-07 that this dataset's date
         // column is "offense_date", not "occurred_date" as originally
         // scaffolded.
-        "$where": `beat in (${beatClause}) AND offense_date > '${daysAgoISO(7)}'`,
+        "$where": `beat in (${beatClause}) AND offense_date > '${since}'`,
         "$limit": "5000",
       },
       env
@@ -122,11 +123,12 @@ async function pullCrimeData(env) {
   return rows.length;
 }
 
-async function pullTerryStops(env) {
+async function pullTerryStops(env, sinceDate) {
   const beats = (env.CID_BEATS || "").split(",").map((b) => b.trim()).filter(Boolean);
   if (!beats.length) return 0;
 
   const beatClause = beats.map((b) => `'${b}'`).join(",");
+  const since = sinceDate ?? daysAgoISO(7);
   let rows;
   try {
     rows = await socrataFetch(
@@ -135,7 +137,7 @@ async function pullTerryStops(env) {
         // TODO verify: confirmed live 2026-07 that this dataset's date
         // column is "occurred_date", not "stop_date" as originally
         // scaffolded.
-        "$where": `beat in (${beatClause}) AND occurred_date > '${daysAgoISO(7)}'`,
+        "$where": `beat in (${beatClause}) AND occurred_date > '${since}'`,
         "$limit": "5000",
       },
       env
@@ -166,11 +168,12 @@ async function pullTerryStops(env) {
   return rows.length;
 }
 
-async function pullCallsForService(env) {
+async function pullCallsForService(env, sinceDate) {
   const beats = (env.CID_BEATS || "").split(",").map((b) => b.trim()).filter(Boolean);
   if (!beats.length) return 0;
 
   const beatClause = beats.map((b) => `'${b}'`).join(",");
+  const since = sinceDate ?? daysAgoISO(7);
   let rows;
   try {
     // TODO verify: confirmed live 2026-07 that resource ID 33kz-ixgy is
@@ -180,7 +183,7 @@ async function pullCallsForService(env) {
     rows = await socrataFetch(
       DATASETS.callsForService,
       {
-        "$where": `dispatch_beat in (${beatClause}) AND cad_event_original_time_queued > '${daysAgoISO(7)}'`,
+        "$where": `dispatch_beat in (${beatClause}) AND cad_event_original_time_queued > '${since}'`,
         "$limit": "5000",
       },
       env
@@ -240,6 +243,12 @@ async function dispatchCameraCapture(env) {
 function daysAgoISO(n) {
   const d = new Date();
   d.setDate(d.getDate() - n);
+  return d.toISOString().slice(0, 10);
+}
+
+function daysBeforeISO(dateStr, n) {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - n);
   return d.toISOString().slice(0, 10);
 }
 
@@ -525,6 +534,19 @@ export default {
       const cfs = await pullCallsForService(env);
       await rollupDaily(env);
       return new Response(JSON.stringify({ crime, terry, cfs }), {
+        headers: { "content-type": "application/json" },
+      });
+    }
+    // One-time historical backfill so the trend chart has pre-enforcement
+    // context, not just the rolling 7-day catch-up window. Defaults to a
+    // week before PROMISE_2_DATE; pass ?since=YYYY-MM-DD to override.
+    if (url.pathname === "/run/backfill") {
+      const since = url.searchParams.get("since") ?? daysBeforeISO(env.PROMISE_2_DATE, 7);
+      const crime = await pullCrimeData(env, since);
+      const terry = await pullTerryStops(env, since);
+      const cfs = await pullCallsForService(env, since);
+      await rollupDaily(env);
+      return new Response(JSON.stringify({ since, crime, terry, cfs }), {
         headers: { "content-type": "application/json" },
       });
     }
