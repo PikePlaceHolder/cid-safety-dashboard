@@ -23,6 +23,9 @@
 
 const SOCRATA_DOMAIN = "data.seattle.gov"; // cos-data.seattle.gov also resolves the same IDs
 
+const GITHUB_REPO = "PikePlaceHolder/cid-safety-dashboard";
+const GITHUB_CAMERA_WORKFLOW = "camera-snapshots.yml";
+
 const DATASETS = {
   // SPD Crime Data, 2008-present. Confirmed current as of this build.
   crime: "tazs-3rd5",
@@ -206,6 +209,32 @@ async function pullCallsForService(env) {
   );
   if (stmts.length) await env.DB.batch(stmts);
   return rows.length;
+}
+
+// GitHub's own `schedule:` trigger proved unreliable for the camera-capture
+// workflow (confirmed by direct testing — ticks silently no-showed for
+// hours). This Worker's cron dispatches it via the API instead, using a
+// fine-grained PAT (Actions: read/write on this repo only) stored as the
+// GITHUB_PAT secret.
+async function dispatchCameraCapture(env) {
+  const res = await fetch(
+    `https://api.github.com/repos/${GITHUB_REPO}/actions/workflows/${GITHUB_CAMERA_WORKFLOW}/dispatches`,
+    {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${env.GITHUB_PAT}`,
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "cid-safety-dashboard-worker",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ ref: "main" }),
+    }
+  );
+  if (!res.ok) {
+    console.error(`GitHub workflow dispatch failed (${res.status}): ${await res.text()}`);
+  }
+  return res.ok;
 }
 
 function daysAgoISO(n) {
@@ -449,6 +478,10 @@ async function renderDashboard(env) {
 
 export default {
   async scheduled(event, env, ctx) {
+    if (event.cron === "8 1-23/3 * * *") {
+      ctx.waitUntil(dispatchCameraCapture(env));
+      return;
+    }
     ctx.waitUntil(
       (async () => {
         await pullCrimeData(env);
@@ -492,6 +525,13 @@ export default {
       const cfs = await pullCallsForService(env);
       await rollupDaily(env);
       return new Response(JSON.stringify({ crime, terry, cfs }), {
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (url.pathname === "/run/camera-dispatch") {
+      const ok = await dispatchCameraCapture(env);
+      return new Response(JSON.stringify({ dispatched: ok }), {
+        status: ok ? 200 : 502,
         headers: { "content-type": "application/json" },
       });
     }

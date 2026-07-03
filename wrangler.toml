@@ -2,12 +2,18 @@ name = "cid-safety-dashboard"
 main = "src/worker.js"
 compatibility_date = "2026-07-01"
 
-# Camera snapshots are now captured by a separate GitHub Actions workflow
+# Camera snapshots are still captured by a separate GitHub Actions workflow
 # (see .github/workflows/camera-snapshots.yml) since Workers can't run ffmpeg
-# to pull stills from SDOT's HLS video streams. This Worker only needs the
-# daily data pull for crime / Terry Stops / Calls-for-Service.
+# to pull stills from SDOT's HLS video streams — but GitHub's own `schedule:`
+# trigger turned out to be unreliable for this repo (confirmed via direct
+# testing: ticks silently no-showed for hours, including a same-day
+# near-future test cron). So this Worker's cron now also dispatches that
+# workflow via the GitHub API instead of relying on GitHub to self-trigger it.
 [triggers]
-crons = ["0 13 * * *"]
+crons = [
+  "0 13 * * *",      # daily SPD data pull
+  "8 1-23/3 * * *",  # every 3 hours: dispatch the camera-capture workflow
+]
 
 [[d1_databases]]
 binding = "DB"

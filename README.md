@@ -6,13 +6,25 @@ Two pieces:
    Terry Stops, and Calls-for-Service for beat **K3**, rolls up counts into D1,
    and serves the dashboard page (`/`) plus stored camera images (`/snapshot/<key>`).
 2. **GitHub Actions workflow** (`.github/workflows/camera-snapshots.yml`) — grabs
-   a still frame from each of the 5 corridor cameras (+ 1 freeway camera) on a
-   schedule, uploads to R2, and logs the row straight into the same D1 database.
+   a still frame from each of the 5 corridor cameras (+ 1 freeway camera),
+   uploads to R2, and logs the row straight into the same D1 database.
 
 Camera capture had to move out of the Worker: SDOT's cameras in this corridor
 turned out to be live HLS video streams, not static JPGs, and Cloudflare
 Workers can't decode video. GitHub's hosted runners have ffmpeg, so that's
 where the actual frame-grab happens now.
+
+**Scheduling the camera capture turned out to be its own problem.** GitHub's
+native `schedule:` trigger on this workflow proved unreliable — confirmed via
+direct testing that ticks silently no-showed for hours, including a same-day
+near-future test cron that never fired at all (no GitHub status incident at
+the time). Rather than depend on that, the Worker's own cron (proven
+reliable — it's been firing the daily data pull exactly on schedule) now
+dispatches the camera-capture workflow via GitHub's API every 3 hours,
+using a fine-grained PAT (`GITHUB_PAT` Worker secret, `Actions: read/write`
+scoped to just this repo). The workflow's own `schedule:` trigger is left in
+place as a harmless backup in case GitHub's scheduler ever does pick this
+repo up — worst case is an occasional extra capture, not a conflict.
 
 ## Confirmed facts (as of this build)
 
@@ -92,11 +104,16 @@ wrangler r2 bucket create cid-camera-snapshots
 # https://data.seattle.gov/profile/edit/developer_settings
 wrangler secret put SOCRATA_APP_TOKEN
 
+# needed so the Worker's cron can dispatch the camera-capture workflow
+# (see "Camera capture scheduling" below for how to create this token)
+wrangler secret put GITHUB_PAT
+
 wrangler deploy
 ```
 
 Test the daily pull without waiting for cron: visit `/run/daily` on your
-deployed Worker URL.
+deployed Worker URL. Test the camera-capture dispatch the same way: visit
+`/run/camera-dispatch`.
 
 ### GitHub Actions (camera capture)
 
@@ -109,8 +126,19 @@ Add these repo secrets (Settings → Secrets and variables → Actions):
 | `CF_D1_DATABASE_ID` | Same ID you put in `wrangler.toml` |
 | `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | Cloudflare dashboard → R2 → Manage R2 API Tokens → create a token scoped to the `cid-camera-snapshots` bucket |
 
-Then either wait for the 3-hourly schedule or trigger it manually from the
-Actions tab (`workflow_dispatch`).
+### Camera capture scheduling
+
+The workflow only runs via `workflow_dispatch` in practice — see the note
+above about GitHub's native `schedule:` trigger being unreliable for this
+repo. The Worker dispatches it instead:
+
+1. Create a fine-grained GitHub PAT at
+   [github.com/settings/personal-access-tokens/new](https://github.com/settings/personal-access-tokens/new),
+   scoped to **only this repository**, with **Actions: Read and write**
+   permission and nothing else.
+2. `wrangler secret put GITHUB_PAT` on the Worker (see above).
+3. The Worker's second cron trigger (`wrangler.toml` → `[triggers].crons`)
+   calls GitHub's dispatch API on the same 3-hour cadence.
 
 **3-hourly vs. daily**: every 3 hours (8 runs/day/camera), anchored to
 Seattle midnight, is what's wired up now — see the comment above the cron
