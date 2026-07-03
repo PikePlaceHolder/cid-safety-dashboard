@@ -18,10 +18,6 @@ on:
     # up at once. Confirmed the hard way: the :00 schedule never fired at
     # all in this repo's first ~15+ min window.
     - cron: "8 1-23/3 * * *"
-    # TEMPORARY diagnostic — firing in ~7 min to test whether GitHub's
-    # scheduler works for this repo at all, since the 3-hour schedule above
-    # has silently missed multiple ticks. Remove once confirmed either way.
-    - cron: "9 14 * * *"
   workflow_dispatch: {}
 
 jobs:
