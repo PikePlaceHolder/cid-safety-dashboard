@@ -35,7 +35,7 @@ while IFS= read -r cam; do
   if [ "$type" = "sdot" ]; then
     stream_url="${STREAM_HOST}/${slug}.stream/playlist.m3u8"
     echo "Grabbing frame from ${name} via HLS..."
-    if ! ffmpeg -y -loglevel error -timeout 15000000 -i "$stream_url" -frames:v 1 -q:v 3 "$outfile"; then
+    if ! ffmpeg -nostdin -y -loglevel error -timeout 15000000 -i "$stream_url" -frames:v 1 -q:v 3 "$outfile"; then
       echo "WARN: failed to grab ${name}, skipping"
       continue
     fi
