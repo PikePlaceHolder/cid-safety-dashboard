@@ -12,7 +12,7 @@ crons = ["0 13 * * *"]
 [[d1_databases]]
 binding = "DB"
 database_name = "cid_safety"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "e69bb43d-8f07-439d-a85e-c1b7fa643480"
 
 [[r2_buckets]]
 binding = "CAMERA_SNAPSHOTS"
