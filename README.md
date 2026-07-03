@@ -42,17 +42,38 @@ where the actual frame-grab happens now.
   captures start failing, that hostname is the first thing to check (see the
   comment at the top of `scripts/capture-snapshots.sh` for how to re-derive it).
 
-## Still unverified — check before relying on it
+## Confirmed against live data (2026-07)
 
-1. **Calls-for-Service resource ID** (`worker.js` → `DATASETS.callsForService`,
-   currently `33kz-ixgy`). Seattle re-published this dataset with a new
-   privacy model; confirm the current 4x4 ID by searching "Call Data" on
-   `data.seattle.gov`.
-2. **On-view field value** (`worker.js` → `isOnview()`). Pull a few CFS rows
-   and check what `initial_call_type` actually says for officer-initiated
-   calls, then adjust the string match.
-3. Whether beat `K3` is in fact the right/only beat for this corridor — worth
-   spot-checking a handful of Terry Stops rows once the pipeline is live.
+Deploying and running `/run/daily` against the real Socrata endpoints turned
+up several column renames Seattle made since this project was scaffolded —
+all now fixed in `worker.js`:
+
+- **Calls-for-Service resource ID `33kz-ixgy` is still valid** — the dataset
+  wasn't republished under a new ID, but several columns were renamed:
+  `beat` → `dispatch_beat`, `precinct` → `dispatch_precinct`,
+  `original_time_queued` → `cad_event_original_time_queued`.
+- **Crime dataset** date column is `offense_date`, not `occurred_date`; there's
+  no `offense` column, so the offense description now comes from
+  `nibrs_offense_code_description` (falling back to `offense_sub_category`).
+- **Terry Stops** date column is `occurred_date`, not `stop_date`.
+- **On-view detection confirmed**: CFS rows have a purpose-built
+  `call_type_indicator` field that reads exactly `"ONVIEW"` for
+  officer-initiated calls — `isOnview()` now checks that first, falling back
+  to the original substring match on `initial_call_type` as a safety net.
+- **Beat `K3` is correct and has real, recent CID/Little Saigon activity** —
+  confirmed via live query (51k+ historical crime records, current data).
+- **Publishing lag**: all three datasets lag several days behind real-time
+  (crime/Terry Stops ~3 days, CFS up to ~5 days as observed). The pull window
+  was widened from 2 to 7 days to reliably catch data that's landed since the
+  last run; `ON CONFLICT DO NOTHING` on insert makes the overlap harmless.
+
+## Still worth double-checking periodically
+
+Seattle's open data portal has changed column names on all three datasets at
+least once already — if `/run/daily` starts silently returning zero counts
+again (check via the JSON response, or `wrangler tail`), re-run the manual
+`Invoke-WebRequest`/`curl` checks against the raw Socrata endpoints described
+above before assuming the beat filter or pipeline logic is at fault.
 
 ## Setup
 
