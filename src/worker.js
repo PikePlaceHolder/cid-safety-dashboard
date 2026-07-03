@@ -215,29 +215,43 @@ function daysAgoISO(n) {
 }
 
 async function rollupDaily(env) {
-  const day = todayISO();
-  const crime = await env.DB.prepare(
-    `SELECT COUNT(*) AS c FROM crime_events WHERE occurred_date LIKE ?`
-  ).bind(`${day}%`).first();
-  const terry = await env.DB.prepare(
-    `SELECT COUNT(*) AS c FROM terry_stops WHERE stop_date LIKE ?`
-  ).bind(`${day}%`).first();
-  const cfsTotal = await env.DB.prepare(
-    `SELECT COUNT(*) AS c FROM calls_for_service WHERE call_date LIKE ?`
-  ).bind(`${day}%`).first();
-  const cfsOnview = await env.DB.prepare(
-    `SELECT COUNT(*) AS c FROM calls_for_service WHERE call_date LIKE ? AND officer_initiated = 1`
-  ).bind(`${day}%`).first();
+  // All three SPD datasets lag several days behind real-time (see README),
+  // so rolling up only "today" would always show zero. Instead, roll up
+  // every distinct day actually present across the three tables.
+  const daysResult = await env.DB.prepare(
+    `SELECT DISTINCT day FROM (
+       SELECT substr(occurred_date, 1, 10) AS day FROM crime_events
+       UNION
+       SELECT substr(stop_date, 1, 10) AS day FROM terry_stops
+       UNION
+       SELECT substr(call_date, 1, 10) AS day FROM calls_for_service
+     ) WHERE day IS NOT NULL AND day != ''`
+  ).all();
 
-  await env.DB.prepare(
-    `INSERT INTO daily_rollup (day, crime_count, terry_stop_count, cfs_total, cfs_onview)
-     VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(day) DO UPDATE SET
-       crime_count = excluded.crime_count,
-       terry_stop_count = excluded.terry_stop_count,
-       cfs_total = excluded.cfs_total,
-       cfs_onview = excluded.cfs_onview`
-  ).bind(day, crime?.c ?? 0, terry?.c ?? 0, cfsTotal?.c ?? 0, cfsOnview?.c ?? 0).run();
+  for (const { day } of daysResult.results ?? []) {
+    const crime = await env.DB.prepare(
+      `SELECT COUNT(*) AS c FROM crime_events WHERE occurred_date LIKE ?`
+    ).bind(`${day}%`).first();
+    const terry = await env.DB.prepare(
+      `SELECT COUNT(*) AS c FROM terry_stops WHERE stop_date LIKE ?`
+    ).bind(`${day}%`).first();
+    const cfsTotal = await env.DB.prepare(
+      `SELECT COUNT(*) AS c FROM calls_for_service WHERE call_date LIKE ?`
+    ).bind(`${day}%`).first();
+    const cfsOnview = await env.DB.prepare(
+      `SELECT COUNT(*) AS c FROM calls_for_service WHERE call_date LIKE ? AND officer_initiated = 1`
+    ).bind(`${day}%`).first();
+
+    await env.DB.prepare(
+      `INSERT INTO daily_rollup (day, crime_count, terry_stop_count, cfs_total, cfs_onview)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(day) DO UPDATE SET
+         crime_count = excluded.crime_count,
+         terry_stop_count = excluded.terry_stop_count,
+         cfs_total = excluded.cfs_total,
+         cfs_onview = excluded.cfs_onview`
+    ).bind(day, crime?.c ?? 0, terry?.c ?? 0, cfsTotal?.c ?? 0, cfsOnview?.c ?? 0).run();
+  }
 }
 
 // Note: camera capture happens outside this Worker now (GitHub Actions +
@@ -255,12 +269,19 @@ async function renderDashboard(env) {
   const latestSnapshots = await env.DB.prepare(
     `SELECT * FROM camera_snapshots ORDER BY captured_at DESC LIMIT 6`
   ).all();
+  const cameraNamesResult = await env.DB.prepare(
+    `SELECT DISTINCT camera_name FROM camera_snapshots ORDER BY camera_name`
+  ).all();
 
   const rows = rollups.results ?? [];
   const labels = JSON.stringify(rows.map((r) => r.day));
   const crimeData = JSON.stringify(rows.map((r) => r.crime_count));
   const terryData = JSON.stringify(rows.map((r) => r.terry_stop_count));
   const cfsOnviewData = JSON.stringify(rows.map((r) => r.cfs_onview));
+  const cameraNames = (cameraNamesResult.results ?? []).map((r) => r.camera_name);
+  const cameraOptions = cameraNames
+    .map((n) => `<option value="${n}">${n.replace(/_/g, " ")}</option>`)
+    .join("");
 
   const snapshotCards = (latestSnapshots.results ?? [])
     .map(
@@ -291,6 +312,12 @@ async function renderDashboard(env) {
   .cams { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; }
   .cam-card img { width: 100%; border-radius: 8px; display: block; }
   .cam-meta { font-size: 0.75rem; color: #9aa0a6; margin-top: 0.3rem; }
+  .browser { background: #1a1d24; border-radius: 10px; padding: 1.25rem; margin: 1rem 0 2rem; }
+  .browser-controls { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 1rem; }
+  .browser-controls select { background: #0f1115; color: #e8e8e8; border: 1px solid #2a2e37; border-radius: 6px; padding: 0.4rem 0.6rem; font-size: 0.85rem; }
+  .browser img { max-width: 100%; border-radius: 8px; display: block; }
+  .browser-meta { font-size: 0.8rem; color: #9aa0a6; margin-top: 0.5rem; }
+  .browser-empty { color: #9aa0a6; font-size: 0.85rem; }
 </style>
 </head>
 <body>
@@ -312,6 +339,86 @@ async function renderDashboard(env) {
 
   <h2 style="font-size:1.1rem;">Latest camera snapshots</h2>
   <div class="cams">${snapshotCards || "<p>No snapshots captured yet.</p>"}</div>
+
+  <h2 style="font-size:1.1rem;">Browse camera history</h2>
+  <div class="browser">
+    <div class="browser-controls">
+      <select id="camSelect"><option value="">Select a camera…</option>${cameraOptions}</select>
+      <select id="daySelect" disabled><option value="">Day</option></select>
+      <select id="timeSelect" disabled><option value="">Time</option></select>
+    </div>
+    <div id="browserResult"><p class="browser-empty">Pick a camera, then a day and time, to view that snapshot.</p></div>
+  </div>
+
+  <script>
+    const camSelect = document.getElementById('camSelect');
+    const daySelect = document.getElementById('daySelect');
+    const timeSelect = document.getElementById('timeSelect');
+    const browserResult = document.getElementById('browserResult');
+    let snapshotsByCamera = [];
+
+    function fmtDay(iso) {
+      return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Los_Angeles' });
+    }
+    function fmtTime(iso) {
+      return new Date(iso).toLocaleTimeString('en-US', { timeZone: 'America/Los_Angeles', hour: 'numeric', minute: '2-digit' });
+    }
+
+    camSelect.addEventListener('change', async () => {
+      daySelect.innerHTML = '<option value="">Day</option>';
+      timeSelect.innerHTML = '<option value="">Time</option>';
+      daySelect.disabled = true;
+      timeSelect.disabled = true;
+      browserResult.innerHTML = '<p class="browser-empty">Pick a camera, then a day and time, to view that snapshot.</p>';
+      if (!camSelect.value) return;
+
+      const res = await fetch('/api/snapshots?camera=' + encodeURIComponent(camSelect.value));
+      snapshotsByCamera = await res.json();
+      if (!snapshotsByCamera.length) {
+        browserResult.innerHTML = '<p class="browser-empty">No snapshots stored yet for this camera.</p>';
+        return;
+      }
+
+      const days = [...new Set(snapshotsByCamera.map((s) => fmtDay(s.captured_at)))];
+      for (const d of days) {
+        const opt = document.createElement('option');
+        opt.value = d;
+        opt.textContent = d;
+        daySelect.appendChild(opt);
+      }
+      daySelect.disabled = false;
+    });
+
+    daySelect.addEventListener('change', () => {
+      timeSelect.innerHTML = '<option value="">Time</option>';
+      timeSelect.disabled = true;
+      browserResult.innerHTML = '<p class="browser-empty">Pick a time to view that snapshot.</p>';
+      if (!daySelect.value) return;
+
+      const matches = snapshotsByCamera.filter((s) => fmtDay(s.captured_at) === daySelect.value);
+      for (const s of matches) {
+        const opt = document.createElement('option');
+        opt.value = s.r2_key;
+        opt.textContent = fmtTime(s.captured_at);
+        opt.dataset.capturedAt = s.captured_at;
+        timeSelect.appendChild(opt);
+      }
+      timeSelect.disabled = false;
+    });
+
+    timeSelect.addEventListener('change', () => {
+      if (!timeSelect.value) {
+        browserResult.innerHTML = '<p class="browser-empty">Pick a time to view that snapshot.</p>';
+        return;
+      }
+      const opt = timeSelect.selectedOptions[0];
+      const capturedAt = opt.dataset.capturedAt;
+      browserResult.innerHTML =
+        '<img src="/snapshot/' + encodeURIComponent(timeSelect.value) + '" alt="' + camSelect.value + '" />' +
+        '<div class="browser-meta">' + camSelect.value.replace(/_/g, ' ') + ' — ' +
+        new Date(capturedAt).toLocaleString('en-US', { timeZone: 'America/Los_Angeles' }) + '</div>';
+    });
+  </script>
 
   <script>
     const ctx = document.getElementById('trendChart');
@@ -365,6 +472,17 @@ export default {
       const obj = await env.CAMERA_SNAPSHOTS.get(key);
       if (!obj) return new Response("Not found", { status: 404 });
       return new Response(obj.body, { headers: { "content-type": "image/jpeg" } });
+    }
+
+    if (url.pathname === "/api/snapshots") {
+      const camera = url.searchParams.get("camera");
+      if (!camera) return new Response(JSON.stringify([]), { headers: { "content-type": "application/json" } });
+      const rows = await env.DB.prepare(
+        `SELECT captured_at, r2_key FROM camera_snapshots WHERE camera_name = ? ORDER BY captured_at ASC`
+      ).bind(camera).all();
+      return new Response(JSON.stringify(rows.results ?? []), {
+        headers: { "content-type": "application/json" },
+      });
     }
 
     // Manual trigger endpoints for testing without waiting on cron
