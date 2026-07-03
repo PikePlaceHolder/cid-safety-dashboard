@@ -61,11 +61,13 @@ function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function isOnview(initialCallType) {
+function isOnview(callTypeIndicator, initialCallType) {
+  // Confirmed against live data: call_type_indicator is "ONVIEW" for
+  // officer-initiated calls. Falls back to substring match on
+  // initial_call_type in case call_type_indicator is ever blank.
+  if (callTypeIndicator && callTypeIndicator.toUpperCase() === "ONVIEW") return true;
   if (!initialCallType) return false;
   const t = initialCallType.toUpperCase();
-  // TODO verify: confirm the actual literal SPD uses for officer-initiated
-  // calls in the "Initial Call Type" field (commonly something like "ONVIEW").
   return t.includes("ONVIEW") || t.includes("ON VIEW") || t.includes("PROACTIVE");
 }
 
@@ -78,14 +80,23 @@ async function pullCrimeData(env) {
   if (!beats.length) return 0;
   const beatClause = beats.map((b) => `'${b}'`).join(",");
 
-  const rows = await socrataFetch(
-    DATASETS.crime,
-    {
-      "$where": `beat in (${beatClause}) AND occurred_date > '${daysAgoISO(2)}'`,
-      "$limit": "5000",
-    },
-    env
-  );
+  let rows;
+  try {
+    rows = await socrataFetch(
+      DATASETS.crime,
+      {
+        // TODO verify: confirmed live 2026-07 that this dataset's date
+        // column is "offense_date", not "occurred_date" as originally
+        // scaffolded.
+        "$where": `beat in (${beatClause}) AND offense_date > '${daysAgoISO(7)}'`,
+        "$limit": "5000",
+      },
+      env
+    );
+  } catch (e) {
+    console.error("Crime data pull failed, check DATASETS.crime columns:", e.message);
+    return 0;
+  }
 
   const stmts = rows.map((r) =>
     env.DB.prepare(
@@ -94,9 +105,9 @@ async function pullCrimeData(env) {
        ON CONFLICT(report_number) DO NOTHING`
     ).bind(
       r.report_number ?? r.offense_id ?? crypto.randomUUID(),
-      r.offense ?? null,
+      r.nibrs_offense_code_description ?? r.offense_sub_category ?? null,
       r.offense_category ?? null,
-      r.occurred_date ?? null,
+      r.offense_date ?? null,
       r.mcpp ?? null,
       r.precinct ?? null,
       r.sector ?? null,
@@ -113,14 +124,23 @@ async function pullTerryStops(env) {
   if (!beats.length) return 0;
 
   const beatClause = beats.map((b) => `'${b}'`).join(",");
-  const rows = await socrataFetch(
-    DATASETS.terryStops,
-    {
-      "$where": `beat in (${beatClause}) AND stop_date > '${daysAgoISO(2)}'`,
-      "$limit": "5000",
-    },
-    env
-  );
+  let rows;
+  try {
+    rows = await socrataFetch(
+      DATASETS.terryStops,
+      {
+        // TODO verify: confirmed live 2026-07 that this dataset's date
+        // column is "occurred_date", not "stop_date" as originally
+        // scaffolded.
+        "$where": `beat in (${beatClause}) AND occurred_date > '${daysAgoISO(7)}'`,
+        "$limit": "5000",
+      },
+      env
+    );
+  } catch (e) {
+    console.error("Terry Stops pull failed, check DATASETS.terryStops columns:", e.message);
+    return 0;
+  }
 
   const stmts = rows.map((r) =>
     env.DB.prepare(
@@ -129,7 +149,7 @@ async function pullTerryStops(env) {
        ON CONFLICT(stop_id) DO NOTHING`
     ).bind(
       r.terry_stop_id ?? crypto.randomUUID(),
-      r.stop_date ?? r.reported_date ?? null,
+      r.occurred_date ?? r.reported_date ?? null,
       r.precinct ?? null,
       r.sector ?? null,
       r.beat ?? null,
@@ -150,10 +170,14 @@ async function pullCallsForService(env) {
   const beatClause = beats.map((b) => `'${b}'`).join(",");
   let rows;
   try {
+    // TODO verify: confirmed live 2026-07 that resource ID 33kz-ixgy is
+    // still valid, but Seattle renamed several columns (privacy-model
+    // republish) — beat -> dispatch_beat, original_time_queued ->
+    // cad_event_original_time_queued.
     rows = await socrataFetch(
       DATASETS.callsForService,
       {
-        "$where": `beat in (${beatClause}) AND original_time_queued > '${daysAgoISO(2)}'`,
+        "$where": `dispatch_beat in (${beatClause}) AND cad_event_original_time_queued > '${daysAgoISO(7)}'`,
         "$limit": "5000",
       },
       env
@@ -171,12 +195,12 @@ async function pullCallsForService(env) {
        ON CONFLICT(cad_event_number) DO NOTHING`
     ).bind(
       r.cad_event_number ?? r.cad_cdw_id ?? crypto.randomUUID(),
-      r.original_time_queued ?? null,
+      r.cad_event_original_time_queued ?? null,
       r.initial_call_type ?? null,
       r.final_call_type ?? null,
-      r.beat ?? null,
-      r.precinct ?? null,
-      isOnview(r.initial_call_type) ? 1 : 0,
+      r.dispatch_beat ?? null,
+      r.dispatch_precinct ?? null,
+      isOnview(r.call_type_indicator, r.initial_call_type) ? 1 : 0,
       new Date().toISOString()
     )
   );
@@ -345,11 +369,13 @@ export default {
 
     // Manual trigger endpoints for testing without waiting on cron
     if (url.pathname === "/run/daily") {
-      await pullCrimeData(env);
-      await pullTerryStops(env);
-      await pullCallsForService(env);
+      const crime = await pullCrimeData(env);
+      const terry = await pullTerryStops(env);
+      const cfs = await pullCallsForService(env);
       await rollupDaily(env);
-      return new Response("Daily pull complete");
+      return new Response(JSON.stringify({ crime, terry, cfs }), {
+        headers: { "content-type": "application/json" },
+      });
     }
     return new Response("Not found", { status: 404 });
   },

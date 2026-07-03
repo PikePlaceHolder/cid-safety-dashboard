@@ -1,0 +1,29 @@
+{
+  "name": "cid-safety-dashboard",
+  "version": "1.0.0",
+  "description": "CID / Little Saigon Public Safety Tracker — Cloudflare Worker + D1 + R2",
+  "private": true,
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PikePlaceHolder/cid-safety-dashboard.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/PikePlaceHolder/cid-safety-dashboard/issues"
+  },
+  "homepage": "https://github.com/PikePlaceHolder/cid-safety-dashboard#readme",
+  "devDependencies": {
+    "wrangler": "^4.107.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "sharp@0.34.5": true,
+    "workerd@1.20260701.1": true
+  }
+}
