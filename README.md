@@ -88,14 +88,16 @@ Add these repo secrets (Settings → Secrets and variables → Actions):
 | `CF_D1_DATABASE_ID` | Same ID you put in `wrangler.toml` |
 | `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | Cloudflare dashboard → R2 → Manage R2 API Tokens → create a token scoped to the `cid-camera-snapshots` bucket |
 
-Then either wait for the hourly schedule or trigger it manually from the
+Then either wait for the 3-hourly schedule or trigger it manually from the
 Actions tab (`workflow_dispatch`).
 
-**Hourly vs. daily**: hourly is what's wired up now. If GitHub Actions
-minutes become a concern (only really an issue on a private repo — public
-repos get free unlimited minutes), change the cron in
-`.github/workflows/camera-snapshots.yml` to `"5 13 * * *"` for once a day,
-timed to land right after the Worker's own daily pull.
+**3-hourly vs. daily**: every 3 hours (8 runs/day/camera), anchored to
+Seattle midnight, is what's wired up now — see the comment above the cron
+line in `.github/workflows/camera-snapshots.yml` for the UTC/DST math. If
+GitHub Actions minutes become a concern (only really an issue on a private
+repo — public repos get free unlimited minutes), change the cron to
+`"0 13 * * *"` for once a day, timed to land right after the Worker's own
+daily pull.
 
 ## On the promise-tracker problem
 

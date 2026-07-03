@@ -2,12 +2,17 @@ name: Capture camera snapshots
 
 on:
   schedule:
-    # Hourly at :05. To switch to daily, replace with e.g. "5 13 * * *"
-    # (13:00 UTC ~ 6am Seattle, matching the Worker's daily data pull).
-    # Rough cost: hourly x 6 cameras is well within GitHub's free minutes on
+    # Every 3 hours (8 runs/day/camera), anchored to Seattle midnight.
+    # GitHub Actions cron is always UTC; Seattle is UTC-7 during daylight
+    # saving (PDT, roughly Mar-Nov), so local 00:00/03:00/06:00/... maps to
+    # UTC 07:00/10:00/13:00/.... Once PST (UTC-8) kicks in for the winter,
+    # this will drift an hour later than local midnight — revisit then if it
+    # matters. To switch to daily, replace with e.g. "0 13 * * *" (13:00 UTC
+    # ~ 6am Seattle, matching the Worker's daily data pull).
+    # Rough cost: 8x/day x 6 cameras is well within GitHub's free minutes on
     # a public repo; on a private repo budget for ~2000 free min/month and
-    # watch usage under Settings > Billing if you keep it hourly.
-    - cron: "5 * * * *"
+    # watch usage under Settings > Billing.
+    - cron: "0 1-23/3 * * *"
   workflow_dispatch: {}
 
 jobs:
