@@ -460,6 +460,30 @@ async function renderDashboard(env) {
 
   <script>
     const ctx = document.getElementById('trendChart');
+    const promiseLinePlugin = {
+      id: 'promiseLine',
+      afterDraw(chart) {
+        const idx = chart.data.labels.indexOf(${JSON.stringify(env.PROMISE_2_DATE)});
+        if (idx === -1) return;
+        const x = chart.scales.x.getPixelForValue(idx);
+        const { top, bottom } = chart.chartArea;
+        const c = chart.ctx;
+        c.save();
+        c.strokeStyle = '#e8e8e8';
+        c.setLineDash([6, 4]);
+        c.lineWidth = 1.5;
+        c.beginPath();
+        c.moveTo(x, top);
+        c.lineTo(x, bottom);
+        c.stroke();
+        c.setLineDash([]);
+        c.fillStyle = '#e8e8e8';
+        c.font = '11px -apple-system, system-ui, sans-serif';
+        c.textAlign = 'left';
+        c.fillText('Jun 18: enforcement plan', x + 6, top + 12);
+        c.restore();
+      },
+    };
     new Chart(ctx, {
       type: 'line',
       data: {
@@ -477,6 +501,7 @@ async function renderDashboard(env) {
           y: { ticks: { color: '#9aa0a6' }, grid: { color: '#2a2e37' } },
         },
       },
+      plugins: [promiseLinePlugin],
     });
   </script>
 </body>
