@@ -24,7 +24,9 @@ TS_SAFE=$(date -u +"%Y-%m-%dT%H-%M-%SZ")
 OUTDIR="frames"
 mkdir -p "$OUTDIR"
 
-while IFS= read -r cam; do
+mapfile -t CAMERAS < <(jq -c '.[]' cameras.json)
+
+for cam in "${CAMERAS[@]}"; do
   name=$(jq -r '.name' <<<"$cam")
   type=$(jq -r '.type' <<<"$cam")
   slug=$(jq -r '.slug' <<<"$cam")
@@ -64,4 +66,4 @@ while IFS= read -r cam; do
     -d "$payload" > /dev/null
 
   echo "Stored ${name} -> ${key}"
-done < <(jq -c '.[]' cameras.json)
+done
