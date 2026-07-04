@@ -591,17 +591,18 @@ async function renderDashboard(env) {
     // bucket (Jun18-24) — a week that's entirely post-announcement but too
     // soon to show any real effect. Pinning the marker to that point makes
     // it look like the policy caused an instant reversal, so in weekly view
-    // it's drawn between that bucket and the next one instead. Daily view
-    // has no such ambiguity and keeps the marker exactly on June 18.
+    // it's drawn between the *previous* bucket and that one instead, so the
+    // Jun18 week itself reads as "post." Daily view has no such ambiguity
+    // and keeps the marker exactly on June 18.
     const promiseLinePlugin = {
       id: 'promiseLine',
       afterDraw(chart) {
         const idx = chart.data.labels.indexOf(${JSON.stringify(env.PROMISE_2_DATE)});
         if (idx === -1) return;
         let x;
-        if (currentView === 'weekly' && idx + 1 < chart.data.labels.length) {
-          const x0 = chart.scales.x.getPixelForValue(idx);
-          const x1 = chart.scales.x.getPixelForValue(idx + 1);
+        if (currentView === 'weekly' && idx - 1 >= 0) {
+          const x0 = chart.scales.x.getPixelForValue(idx - 1);
+          const x1 = chart.scales.x.getPixelForValue(idx);
           x = (x0 + x1) / 2;
         } else {
           x = chart.scales.x.getPixelForValue(idx);
