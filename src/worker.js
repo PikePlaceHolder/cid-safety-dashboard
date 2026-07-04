@@ -252,6 +252,49 @@ function daysBeforeISO(dateStr, n) {
   return d.toISOString().slice(0, 10);
 }
 
+// Weekly buckets run Thursday->Wednesday so that PROMISE_2_DATE (June 18,
+// 2026 — a Thursday) always lands as the first day of its week.
+function weekStartISO(dayISO) {
+  const d = new Date(`${dayISO}T00:00:00Z`);
+  const offsetFromThursday = (d.getUTCDay() - 4 + 7) % 7;
+  d.setUTCDate(d.getUTCDate() - offsetFromThursday);
+  return d.toISOString().slice(0, 10);
+}
+
+function aggregateWeekly(rows) {
+  const byWeek = new Map();
+  for (const r of rows) {
+    const wk = weekStartISO(r.day);
+    if (!byWeek.has(wk)) {
+      byWeek.set(wk, { day: wk, crime_count: 0, terry_stop_count: 0, cfs_total: 0, cfs_onview: 0 });
+    }
+    const agg = byWeek.get(wk);
+    agg.crime_count += r.crime_count ?? 0;
+    agg.terry_stop_count += r.terry_stop_count ?? 0;
+    agg.cfs_total += r.cfs_total ?? 0;
+    agg.cfs_onview += r.cfs_onview ?? 0;
+  }
+  return [...byWeek.values()].sort((a, b) => a.day.localeCompare(b.day));
+}
+
+function buildChartSeries(rows) {
+  return {
+    labels: rows.map((r) => r.day),
+    crime: rows.map((r) => r.crime_count),
+    terry: rows.map((r) => r.terry_stop_count),
+    cfsOnview: rows.map((r) => r.cfs_onview),
+    cfsOther: rows.map((r) => (r.cfs_total ?? 0) - (r.cfs_onview ?? 0)),
+    // Ratios as percentages; null (not 0) on days/weeks with no denominator
+    // so Chart.js leaves a gap instead of plotting a misleading 0.
+    terryPerCrime: rows.map((r) =>
+      r.crime_count > 0 ? Math.round((r.terry_stop_count / r.crime_count) * 1000) / 10 : null
+    ),
+    onviewShare: rows.map((r) =>
+      r.cfs_total > 0 ? Math.round((r.cfs_onview / r.cfs_total) * 1000) / 10 : null
+    ),
+  };
+}
+
 async function rollupDaily(env) {
   // All three SPD datasets lag several days behind real-time (see README),
   // so rolling up only "today" would always show zero. Instead, roll up
@@ -266,7 +309,9 @@ async function rollupDaily(env) {
      ) WHERE day IS NOT NULL AND day != ''`
   ).all();
 
-  for (const { day } of daysResult.results ?? []) {
+  const validDays = (daysResult.results ?? []).map((r) => r.day);
+
+  for (const day of validDays) {
     const crime = await env.DB.prepare(
       `SELECT COUNT(*) AS c FROM crime_events WHERE occurred_date LIKE ?`
     ).bind(`${day}%`).first();
@@ -290,6 +335,19 @@ async function rollupDaily(env) {
          cfs_onview = excluded.cfs_onview`
     ).bind(day, crime?.c ?? 0, terry?.c ?? 0, cfsTotal?.c ?? 0, cfsOnview?.c ?? 0).run();
   }
+
+  // Purge stale rows left over from days that no longer have any backing
+  // raw data (e.g. the old pre-fix rollup used to always write a "today"
+  // row, even with nothing published for it yet — that phantom zero-row
+  // would otherwise trail off the end of every chart).
+  if (validDays.length) {
+    const placeholders = validDays.map(() => "?").join(",");
+    await env.DB.prepare(
+      `DELETE FROM daily_rollup WHERE day NOT IN (${placeholders})`
+    ).bind(...validDays).run();
+  } else {
+    await env.DB.prepare(`DELETE FROM daily_rollup`).run();
+  }
 }
 
 // Note: camera capture happens outside this Worker now (GitHub Actions +
@@ -312,19 +370,11 @@ async function renderDashboard(env) {
   ).all();
 
   const rows = rollups.results ?? [];
-  const labels = JSON.stringify(rows.map((r) => r.day));
-  const crimeData = JSON.stringify(rows.map((r) => r.crime_count));
-  const terryData = JSON.stringify(rows.map((r) => r.terry_stop_count));
-  const cfsOnviewData = JSON.stringify(rows.map((r) => r.cfs_onview));
-  const cfsOtherData = JSON.stringify(rows.map((r) => (r.cfs_total ?? 0) - (r.cfs_onview ?? 0)));
-  // Ratios as percentages; null (not 0) on days with no denominator so
-  // Chart.js leaves a gap instead of plotting a misleading 0.
-  const terryPerCrimeData = JSON.stringify(
-    rows.map((r) => (r.crime_count > 0 ? Math.round((r.terry_stop_count / r.crime_count) * 1000) / 10 : null))
-  );
-  const onviewShareData = JSON.stringify(
-    rows.map((r) => (r.cfs_total > 0 ? Math.round((r.cfs_onview / r.cfs_total) * 1000) / 10 : null))
-  );
+  const weeklyRows = aggregateWeekly(rows);
+  const chartDataJSON = JSON.stringify({
+    daily: buildChartSeries(rows),
+    weekly: buildChartSeries(weeklyRows),
+  });
   const cameraNames = (cameraNamesResult.results ?? []).map((r) => r.camera_name);
   const cameraOptions = cameraNames
     .map((n) => `<option value="${n}">${n.replace(/_/g, " ")}</option>`)
@@ -354,7 +404,7 @@ async function renderDashboard(env) {
     --navy-panel-2: #16304f;
     --navy-border: #1f3d61;
     --red: #c8102e;
-    --white: #f5f7fa;
+    --white: #efe6cc;
     --silver: #aebfd4;
     --gold: #d4af37;
   }
@@ -371,6 +421,12 @@ async function renderDashboard(env) {
   .promise-card h3 { margin: 0 0 0.4rem; font-size: 0.95rem; color: var(--white); }
   .promise-card p { margin: 0; color: var(--silver); font-size: 0.85rem; }
   .chart-wrap { background: var(--navy-panel); border-radius: 10px; padding: 1.25rem; height: 340px; }
+  .view-toggle { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; }
+  .view-toggle button {
+    background: var(--navy-panel); color: var(--silver); border: 1px solid var(--navy-border);
+    border-radius: 6px; padding: 0.4rem 1rem; font-size: 0.85rem; cursor: pointer;
+  }
+  .view-toggle button.active { background: var(--red); color: var(--white); border-color: var(--red); }
   .cams { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; }
   .cam-card { background: var(--navy-panel); border-radius: 10px; padding: 0.6rem; }
   .cam-card img { width: 100%; border-radius: 6px; display: block; }
@@ -398,6 +454,11 @@ async function renderDashboard(env) {
       <h3>Jun 18, 2026 — 12th &amp; Jackson enforcement plan</h3>
       <p>Increased police contact for open-air drug activity, LEAD program referrals over arrest, and $1.1M for outreach and mobile treatment services.</p>
     </div>
+  </div>
+
+  <div class="view-toggle">
+    <button id="dailyBtn" class="active">Daily</button>
+    <button id="weeklyBtn">Weekly</button>
   </div>
 
   <div class="section">
@@ -505,10 +566,14 @@ async function renderDashboard(env) {
   </script>
 
   <script>
+    const CHART_DATA = ${chartDataJSON};
+    let currentView = 'daily';
+
     const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     function fmtAxisDate(isoDay) {
       const [, m, d] = isoDay.split('-');
-      return MONTHS[parseInt(m, 10) - 1] + '-' + d;
+      const md = MONTHS[parseInt(m, 10) - 1] + '-' + d;
+      return currentView === 'weekly' ? 'Week of ' + md : md;
     }
 
     const promiseLinePlugin = {
@@ -520,7 +585,7 @@ async function renderDashboard(env) {
         const { top, bottom } = chart.chartArea;
         const c = chart.ctx;
         c.save();
-        c.strokeStyle = '#e8e8e8';
+        c.strokeStyle = '#efe6cc';
         c.setLineDash([6, 4]);
         c.lineWidth = 1.5;
         c.beginPath();
@@ -528,7 +593,7 @@ async function renderDashboard(env) {
         c.lineTo(x, bottom);
         c.stroke();
         c.setLineDash([]);
-        c.fillStyle = '#f5f7fa';
+        c.fillStyle = '#efe6cc';
         c.font = '11px -apple-system, system-ui, sans-serif';
         c.textAlign = 'left';
         c.fillText('Jun 18: enforcement plan', x + 6, top + 12);
@@ -547,52 +612,15 @@ async function renderDashboard(env) {
       y: { ticks: { color: '#aebfd4' }, grid: { color: '#1f3d61' } },
     };
     const sharedPlugins = {
-      legend: { labels: { color: '#f5f7fa' } },
+      legend: { labels: { color: '#efe6cc' } },
       tooltip: { callbacks: { title: (items) => fmtAxisDate(items[0].label) } },
     };
-
-    new Chart(document.getElementById('crimeStopsChart'), {
-      type: 'line',
-      data: {
-        labels: ${labels},
-        datasets: [
-          { label: 'Crime reports (SPD, daily)', data: ${crimeData}, borderColor: '#c8102e', backgroundColor: '#c8102e', tension: 0.25 },
-          { label: 'Terry stops (on-view contacts)', data: ${terryData}, borderColor: '#aebfd4', backgroundColor: '#aebfd4', tension: 0.25 },
-        ],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: sharedPlugins,
-        scales: sharedScales,
-      },
-      plugins: [promiseLinePlugin],
-    });
-
-    new Chart(document.getElementById('callsChart'), {
-      type: 'line',
-      data: {
-        labels: ${labels},
-        datasets: [
-          { label: 'CFS on-view calls', data: ${cfsOnviewData}, borderColor: '#d4af37', backgroundColor: '#d4af37', tension: 0.25 },
-          { label: 'CFS other calls', data: ${cfsOtherData}, borderColor: '#5b8fc7', backgroundColor: '#5b8fc7', tension: 0.25 },
-        ],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: sharedPlugins,
-        scales: sharedScales,
-      },
-      plugins: [promiseLinePlugin],
-    });
-
     const sharedScalesPct = {
       x: sharedScales.x,
       y: { ticks: { color: '#aebfd4', callback: (v) => v + '%' }, grid: { color: '#1f3d61' } },
     };
     const sharedPluginsPct = {
-      legend: { labels: { color: '#f5f7fa' } },
+      legend: { labels: { color: '#efe6cc' } },
       tooltip: {
         callbacks: {
           title: (items) => fmtAxisDate(items[0].label),
@@ -601,23 +629,70 @@ async function renderDashboard(env) {
       },
     };
 
-    new Chart(document.getElementById('ratiosChart'), {
+    const crimeStopsChart = new Chart(document.getElementById('crimeStopsChart'), {
       type: 'line',
       data: {
-        labels: ${labels},
+        labels: CHART_DATA.daily.labels,
         datasets: [
-          { label: 'Terry stops per crime report', data: ${terryPerCrimeData}, borderColor: '#c8102e', backgroundColor: '#c8102e', tension: 0.25, spanGaps: false },
-          { label: 'On-view share of calls', data: ${onviewShareData}, borderColor: '#d4af37', backgroundColor: '#d4af37', tension: 0.25, spanGaps: false },
+          { label: 'Crime reports (SPD, daily)', data: CHART_DATA.daily.crime, borderColor: '#c8102e', backgroundColor: '#c8102e', tension: 0.25 },
+          { label: 'Terry stops (on-view contacts)', data: CHART_DATA.daily.terry, borderColor: '#aebfd4', backgroundColor: '#aebfd4', tension: 0.25 },
         ],
       },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: sharedPluginsPct,
-        scales: sharedScalesPct,
-      },
+      options: { responsive: true, maintainAspectRatio: false, plugins: sharedPlugins, scales: sharedScales },
       plugins: [promiseLinePlugin],
     });
+
+    const callsChart = new Chart(document.getElementById('callsChart'), {
+      type: 'line',
+      data: {
+        labels: CHART_DATA.daily.labels,
+        datasets: [
+          { label: 'CFS on-view calls', data: CHART_DATA.daily.cfsOnview, borderColor: '#d4af37', backgroundColor: '#d4af37', tension: 0.25 },
+          { label: 'CFS other calls', data: CHART_DATA.daily.cfsOther, borderColor: '#5b8fc7', backgroundColor: '#5b8fc7', tension: 0.25 },
+        ],
+      },
+      options: { responsive: true, maintainAspectRatio: false, plugins: sharedPlugins, scales: sharedScales },
+      plugins: [promiseLinePlugin],
+    });
+
+    const ratiosChart = new Chart(document.getElementById('ratiosChart'), {
+      type: 'line',
+      data: {
+        labels: CHART_DATA.daily.labels,
+        datasets: [
+          { label: 'Terry stops per crime report', data: CHART_DATA.daily.terryPerCrime, borderColor: '#c8102e', backgroundColor: '#c8102e', tension: 0.25, spanGaps: false },
+          { label: 'On-view share of calls', data: CHART_DATA.daily.onviewShare, borderColor: '#d4af37', backgroundColor: '#d4af37', tension: 0.25, spanGaps: false },
+        ],
+      },
+      options: { responsive: true, maintainAspectRatio: false, plugins: sharedPluginsPct, scales: sharedScalesPct },
+      plugins: [promiseLinePlugin],
+    });
+
+    function applyView(view) {
+      currentView = view;
+      const d = CHART_DATA[view];
+
+      crimeStopsChart.data.labels = d.labels;
+      crimeStopsChart.data.datasets[0].data = d.crime;
+      crimeStopsChart.data.datasets[1].data = d.terry;
+      crimeStopsChart.update();
+
+      callsChart.data.labels = d.labels;
+      callsChart.data.datasets[0].data = d.cfsOnview;
+      callsChart.data.datasets[1].data = d.cfsOther;
+      callsChart.update();
+
+      ratiosChart.data.labels = d.labels;
+      ratiosChart.data.datasets[0].data = d.terryPerCrime;
+      ratiosChart.data.datasets[1].data = d.onviewShare;
+      ratiosChart.update();
+
+      document.getElementById('dailyBtn').classList.toggle('active', view === 'daily');
+      document.getElementById('weeklyBtn').classList.toggle('active', view === 'weekly');
+    }
+
+    document.getElementById('dailyBtn').addEventListener('click', () => applyView('daily'));
+    document.getElementById('weeklyBtn').addEventListener('click', () => applyView('weekly'));
   </script>
 </body>
 </html>`;
