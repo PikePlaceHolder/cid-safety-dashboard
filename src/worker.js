@@ -317,6 +317,14 @@ async function renderDashboard(env) {
   const terryData = JSON.stringify(rows.map((r) => r.terry_stop_count));
   const cfsOnviewData = JSON.stringify(rows.map((r) => r.cfs_onview));
   const cfsOtherData = JSON.stringify(rows.map((r) => (r.cfs_total ?? 0) - (r.cfs_onview ?? 0)));
+  // Ratios as percentages; null (not 0) on days with no denominator so
+  // Chart.js leaves a gap instead of plotting a misleading 0.
+  const terryPerCrimeData = JSON.stringify(
+    rows.map((r) => (r.crime_count > 0 ? Math.round((r.terry_stop_count / r.crime_count) * 1000) / 10 : null))
+  );
+  const onviewShareData = JSON.stringify(
+    rows.map((r) => (r.cfs_total > 0 ? Math.round((r.cfs_onview / r.cfs_total) * 1000) / 10 : null))
+  );
   const cameraNames = (cameraNamesResult.results ?? []).map((r) => r.camera_name);
   const cameraOptions = cameraNames
     .map((n) => `<option value="${n}">${n.replace(/_/g, " ")}</option>`)
@@ -400,6 +408,12 @@ async function renderDashboard(env) {
   <div class="section">
     <h2>Calls for service — on-view vs. other</h2>
     <div class="chart-wrap"><canvas id="callsChart"></canvas></div>
+  </div>
+
+  <div class="section">
+    <h2>Engagement ratios</h2>
+    <p class="subtitle" style="margin-bottom: 0.75rem;">Spikes on low-volume days (e.g. 1 crime report, 2 stops) are small-sample noise, not real swings — gaps mean zero in the denominator that day.</p>
+    <div class="chart-wrap"><canvas id="ratiosChart"></canvas></div>
   </div>
 
   <div class="section">
@@ -569,6 +583,38 @@ async function renderDashboard(env) {
         maintainAspectRatio: false,
         plugins: sharedPlugins,
         scales: sharedScales,
+      },
+      plugins: [promiseLinePlugin],
+    });
+
+    const sharedScalesPct = {
+      x: sharedScales.x,
+      y: { ticks: { color: '#aebfd4', callback: (v) => v + '%' }, grid: { color: '#1f3d61' } },
+    };
+    const sharedPluginsPct = {
+      legend: { labels: { color: '#f5f7fa' } },
+      tooltip: {
+        callbacks: {
+          title: (items) => fmtAxisDate(items[0].label),
+          label: (item) => item.dataset.label + ': ' + item.formattedValue + '%',
+        },
+      },
+    };
+
+    new Chart(document.getElementById('ratiosChart'), {
+      type: 'line',
+      data: {
+        labels: ${labels},
+        datasets: [
+          { label: 'Terry stops per crime report', data: ${terryPerCrimeData}, borderColor: '#c8102e', backgroundColor: '#c8102e', tension: 0.25, spanGaps: false },
+          { label: 'On-view share of calls', data: ${onviewShareData}, borderColor: '#d4af37', backgroundColor: '#d4af37', tension: 0.25, spanGaps: false },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: sharedPluginsPct,
+        scales: sharedScalesPct,
       },
       plugins: [promiseLinePlugin],
     });
