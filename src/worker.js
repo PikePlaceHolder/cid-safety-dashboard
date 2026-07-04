@@ -266,13 +266,14 @@ function aggregateWeekly(rows) {
   for (const r of rows) {
     const wk = weekStartISO(r.day);
     if (!byWeek.has(wk)) {
-      byWeek.set(wk, { day: wk, crime_count: 0, terry_stop_count: 0, cfs_total: 0, cfs_onview: 0 });
+      byWeek.set(wk, { day: wk, crime_count: 0, terry_stop_count: 0, cfs_total: 0, cfs_onview: 0, dayCount: 0 });
     }
     const agg = byWeek.get(wk);
     agg.crime_count += r.crime_count ?? 0;
     agg.terry_stop_count += r.terry_stop_count ?? 0;
     agg.cfs_total += r.cfs_total ?? 0;
     agg.cfs_onview += r.cfs_onview ?? 0;
+    agg.dayCount += 1;
   }
   return [...byWeek.values()].sort((a, b) => a.day.localeCompare(b.day));
 }
@@ -292,6 +293,10 @@ function buildChartSeries(rows) {
     onviewShare: rows.map((r) =>
       r.cfs_total > 0 ? Math.round((r.cfs_onview / r.cfs_total) * 1000) / 10 : null
     ),
+    // Only weekly rows carry dayCount (daily rows are always "complete" —
+    // once a day is published it doesn't grow further); < 7 means the
+    // Socrata publishing lag hasn't caught up to the end of that week yet.
+    incomplete: rows.map((r) => (r.dayCount != null ? r.dayCount < 7 : false)),
   };
 }
 
@@ -460,6 +465,7 @@ async function renderDashboard(env) {
     <button id="dailyBtn" class="active">Daily</button>
     <button id="weeklyBtn">Weekly</button>
   </div>
+  <p id="incompleteNote" class="subtitle" style="display:none; margin-top:-1rem;">Dashed segment: the most recent week is still incomplete — Seattle's data typically lags a few days behind real time.</p>
 
   <div class="section">
     <h2>Crime reports &amp; Terry stops</h2>
@@ -568,6 +574,7 @@ async function renderDashboard(env) {
   <script>
     const CHART_DATA = ${chartDataJSON};
     let currentView = 'daily';
+    let currentIncomplete = CHART_DATA.daily.incomplete;
 
     const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     function fmtAxisDate(isoDay) {
@@ -576,12 +583,29 @@ async function renderDashboard(env) {
       return currentView === 'weekly' ? 'Week of ' + md : md;
     }
 
+    function dashIncompleteSegment(ctx) {
+      return currentIncomplete && currentIncomplete[ctx.p1DataIndex] ? [6, 4] : undefined;
+    }
+
+    // In weekly view, PROMISE_2_DATE (June 18) is the *start* of its own
+    // bucket (Jun18-24) — a week that's entirely post-announcement but too
+    // soon to show any real effect. Pinning the marker to that point makes
+    // it look like the policy caused an instant reversal, so in weekly view
+    // it's drawn between that bucket and the next one instead. Daily view
+    // has no such ambiguity and keeps the marker exactly on June 18.
     const promiseLinePlugin = {
       id: 'promiseLine',
       afterDraw(chart) {
         const idx = chart.data.labels.indexOf(${JSON.stringify(env.PROMISE_2_DATE)});
         if (idx === -1) return;
-        const x = chart.scales.x.getPixelForValue(idx);
+        let x;
+        if (currentView === 'weekly' && idx + 1 < chart.data.labels.length) {
+          const x0 = chart.scales.x.getPixelForValue(idx);
+          const x1 = chart.scales.x.getPixelForValue(idx + 1);
+          x = (x0 + x1) / 2;
+        } else {
+          x = chart.scales.x.getPixelForValue(idx);
+        }
         const { top, bottom } = chart.chartArea;
         const c = chart.ctx;
         c.save();
@@ -634,8 +658,8 @@ async function renderDashboard(env) {
       data: {
         labels: CHART_DATA.daily.labels,
         datasets: [
-          { label: 'Crime reports (SPD, daily)', data: CHART_DATA.daily.crime, borderColor: '#c8102e', backgroundColor: '#c8102e', tension: 0.25 },
-          { label: 'Terry stops (on-view contacts)', data: CHART_DATA.daily.terry, borderColor: '#aebfd4', backgroundColor: '#aebfd4', tension: 0.25 },
+          { label: 'Crime reports (SPD, daily)', data: CHART_DATA.daily.crime, borderColor: '#c8102e', backgroundColor: '#c8102e', tension: 0.25, segment: { borderDash: dashIncompleteSegment } },
+          { label: 'Terry stops (on-view contacts)', data: CHART_DATA.daily.terry, borderColor: '#aebfd4', backgroundColor: '#aebfd4', tension: 0.25, segment: { borderDash: dashIncompleteSegment } },
         ],
       },
       options: { responsive: true, maintainAspectRatio: false, plugins: sharedPlugins, scales: sharedScales },
@@ -647,8 +671,8 @@ async function renderDashboard(env) {
       data: {
         labels: CHART_DATA.daily.labels,
         datasets: [
-          { label: 'CFS on-view calls', data: CHART_DATA.daily.cfsOnview, borderColor: '#d4af37', backgroundColor: '#d4af37', tension: 0.25 },
-          { label: 'CFS other calls', data: CHART_DATA.daily.cfsOther, borderColor: '#5b8fc7', backgroundColor: '#5b8fc7', tension: 0.25 },
+          { label: 'CFS on-view calls', data: CHART_DATA.daily.cfsOnview, borderColor: '#d4af37', backgroundColor: '#d4af37', tension: 0.25, segment: { borderDash: dashIncompleteSegment } },
+          { label: 'CFS other calls', data: CHART_DATA.daily.cfsOther, borderColor: '#5b8fc7', backgroundColor: '#5b8fc7', tension: 0.25, segment: { borderDash: dashIncompleteSegment } },
         ],
       },
       options: { responsive: true, maintainAspectRatio: false, plugins: sharedPlugins, scales: sharedScales },
@@ -660,8 +684,8 @@ async function renderDashboard(env) {
       data: {
         labels: CHART_DATA.daily.labels,
         datasets: [
-          { label: 'Terry stops per crime report', data: CHART_DATA.daily.terryPerCrime, borderColor: '#c8102e', backgroundColor: '#c8102e', tension: 0.25, spanGaps: false },
-          { label: 'On-view share of calls', data: CHART_DATA.daily.onviewShare, borderColor: '#d4af37', backgroundColor: '#d4af37', tension: 0.25, spanGaps: false },
+          { label: 'Terry stops per crime report', data: CHART_DATA.daily.terryPerCrime, borderColor: '#c8102e', backgroundColor: '#c8102e', tension: 0.25, spanGaps: false, segment: { borderDash: dashIncompleteSegment } },
+          { label: 'On-view share of calls', data: CHART_DATA.daily.onviewShare, borderColor: '#d4af37', backgroundColor: '#d4af37', tension: 0.25, spanGaps: false, segment: { borderDash: dashIncompleteSegment } },
         ],
       },
       options: { responsive: true, maintainAspectRatio: false, plugins: sharedPluginsPct, scales: sharedScalesPct },
@@ -671,6 +695,11 @@ async function renderDashboard(env) {
     function applyView(view) {
       currentView = view;
       const d = CHART_DATA[view];
+      currentIncomplete = d.incomplete;
+
+      const lastIncomplete = d.incomplete.length > 0 && d.incomplete[d.incomplete.length - 1];
+      document.getElementById('incompleteNote').style.display =
+        (view === 'weekly' && lastIncomplete) ? 'block' : 'none';
 
       crimeStopsChart.data.labels = d.labels;
       crimeStopsChart.data.datasets[0].data = d.crime;
