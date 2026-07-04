@@ -339,30 +339,48 @@ async function renderDashboard(env) {
 <title>CID / Little Saigon Public Safety Tracker</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <style>
-  body { font-family: -apple-system, system-ui, sans-serif; margin: 0; padding: 2rem; background: #0f1115; color: #e8e8e8; }
-  h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
-  .subtitle { color: #9aa0a6; margin-bottom: 2rem; }
-  .promises { display: grid; gap: 1rem; grid-template-columns: 1fr 1fr; margin-bottom: 2rem; }
-  .promise-card { background: #1a1d24; border-radius: 10px; padding: 1rem 1.25rem; border-left: 4px solid #4d8dff; }
-  .promise-card h3 { margin: 0 0 0.4rem; font-size: 0.95rem; }
-  .promise-card p { margin: 0; color: #b7bcc4; font-size: 0.85rem; }
-  canvas { background: #1a1d24; border-radius: 10px; padding: 1rem; margin-bottom: 2rem; }
+  :root {
+    --navy-bg: #0a1628;
+    --navy-panel: #122642;
+    --navy-panel-2: #16304f;
+    --navy-border: #1f3d61;
+    --red: #c8102e;
+    --white: #f5f7fa;
+    --silver: #aebfd4;
+    --gold: #d4af37;
+  }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, system-ui, sans-serif; margin: 0; background: var(--navy-bg); color: var(--white); }
+  .page { max-width: 1100px; margin: 0 auto; padding: 2rem 1.5rem 3rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 0.3rem; letter-spacing: 0.01em; }
+  h1::before { content: ''; display: inline-block; width: 0.6rem; height: 0.6rem; background: var(--red); border-radius: 2px; margin-right: 0.6rem; }
+  h2 { font-size: 1.1rem; margin: 0 0 0.75rem; color: var(--white); }
+  .subtitle { color: var(--silver); margin: 0 0 2rem; font-size: 0.9rem; }
+  .section { margin-bottom: 2rem; }
+  .promises { display: grid; gap: 1rem; grid-template-columns: 1fr 1fr; }
+  .promise-card { background: var(--navy-panel); border-radius: 10px; padding: 1rem 1.25rem; border-left: 4px solid var(--red); }
+  .promise-card h3 { margin: 0 0 0.4rem; font-size: 0.95rem; color: var(--white); }
+  .promise-card p { margin: 0; color: var(--silver); font-size: 0.85rem; }
+  .chart-wrap { background: var(--navy-panel); border-radius: 10px; padding: 1.25rem; height: 340px; }
   .cams { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; }
-  .cam-card img { width: 100%; border-radius: 8px; display: block; }
-  .cam-meta { font-size: 0.75rem; color: #9aa0a6; margin-top: 0.3rem; }
-  .browser { background: #1a1d24; border-radius: 10px; padding: 1.25rem; margin: 1rem 0 2rem; }
+  .cam-card { background: var(--navy-panel); border-radius: 10px; padding: 0.6rem; }
+  .cam-card img { width: 100%; border-radius: 6px; display: block; }
+  .cam-meta { font-size: 0.75rem; color: var(--silver); margin-top: 0.4rem; }
+  .browser { background: var(--navy-panel); border-radius: 10px; padding: 1.25rem; }
   .browser-controls { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 1rem; }
-  .browser-controls select { background: #0f1115; color: #e8e8e8; border: 1px solid #2a2e37; border-radius: 6px; padding: 0.4rem 0.6rem; font-size: 0.85rem; }
+  .browser-controls select { background: var(--navy-bg); color: var(--white); border: 1px solid var(--navy-border); border-radius: 6px; padding: 0.4rem 0.6rem; font-size: 0.85rem; }
+  .browser-controls select:focus { outline: 2px solid var(--red); outline-offset: 1px; }
   .browser img { max-width: 100%; border-radius: 8px; display: block; }
-  .browser-meta { font-size: 0.8rem; color: #9aa0a6; margin-top: 0.5rem; }
-  .browser-empty { color: #9aa0a6; font-size: 0.85rem; }
+  .browser-meta { font-size: 0.8rem; color: var(--silver); margin-top: 0.5rem; }
+  .browser-empty { color: var(--silver); font-size: 0.85rem; }
 </style>
 </head>
 <body>
+<div class="page">
   <h1>Chinatown-International District / Little Saigon — Public Safety Tracker</h1>
   <p class="subtitle">Independent tracker built from public SPD/SDOT data. Not affiliated with the City of Seattle.</p>
 
-  <div class="promises">
+  <div class="section promises">
     <div class="promise-card">
       <h3>Feb 17, 2026 — State of the City</h3>
       <p>Mayor Wilson pledged SPD would restore a late-night presence in the CID that had been discontinued the prior year.</p>
@@ -373,20 +391,25 @@ async function renderDashboard(env) {
     </div>
   </div>
 
-  <canvas id="trendChart" height="90"></canvas>
+  <div class="section chart-wrap"><canvas id="trendChart"></canvas></div>
 
-  <h2 style="font-size:1.1rem;">Latest camera snapshots</h2>
-  <div class="cams">${snapshotCards || "<p>No snapshots captured yet.</p>"}</div>
-
-  <h2 style="font-size:1.1rem;">Browse camera history</h2>
-  <div class="browser">
-    <div class="browser-controls">
-      <select id="camSelect"><option value="">Select a camera…</option>${cameraOptions}</select>
-      <select id="daySelect" disabled><option value="">Day</option></select>
-      <select id="timeSelect" disabled><option value="">Time</option></select>
-    </div>
-    <div id="browserResult"><p class="browser-empty">Pick a camera, then a day and time, to view that snapshot.</p></div>
+  <div class="section">
+    <h2>Latest camera snapshots</h2>
+    <div class="cams">${snapshotCards || "<p>No snapshots captured yet.</p>"}</div>
   </div>
+
+  <div class="section">
+    <h2>Browse camera history</h2>
+    <div class="browser">
+      <div class="browser-controls">
+        <select id="camSelect"><option value="">Select a camera…</option>${cameraOptions}</select>
+        <select id="daySelect" disabled><option value="">Day</option></select>
+        <select id="timeSelect" disabled><option value="">Time</option></select>
+      </div>
+      <div id="browserResult"><p class="browser-empty">Pick a camera, then a day and time, to view that snapshot.</p></div>
+    </div>
+  </div>
+</div>
 
   <script>
     const camSelect = document.getElementById('camSelect');
@@ -477,7 +500,7 @@ async function renderDashboard(env) {
         c.lineTo(x, bottom);
         c.stroke();
         c.setLineDash([]);
-        c.fillStyle = '#e8e8e8';
+        c.fillStyle = '#f5f7fa';
         c.font = '11px -apple-system, system-ui, sans-serif';
         c.textAlign = 'left';
         c.fillText('Jun 18: enforcement plan', x + 6, top + 12);
@@ -489,16 +512,18 @@ async function renderDashboard(env) {
       data: {
         labels: ${labels},
         datasets: [
-          { label: 'Crime reports (SPD, daily)', data: ${crimeData}, borderColor: '#ff6b6b', tension: 0.25 },
-          { label: 'Terry stops (on-view contacts)', data: ${terryData}, borderColor: '#4d8dff', tension: 0.25 },
-          { label: 'CFS on-view calls', data: ${cfsOnviewData}, borderColor: '#ffd166', tension: 0.25 },
+          { label: 'Crime reports (SPD, daily)', data: ${crimeData}, borderColor: '#c8102e', backgroundColor: '#c8102e', tension: 0.25 },
+          { label: 'Terry stops (on-view contacts)', data: ${terryData}, borderColor: '#aebfd4', backgroundColor: '#aebfd4', tension: 0.25 },
+          { label: 'CFS on-view calls', data: ${cfsOnviewData}, borderColor: '#d4af37', backgroundColor: '#d4af37', tension: 0.25 },
         ],
       },
       options: {
-        plugins: { legend: { labels: { color: '#e8e8e8' } } },
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: '#f5f7fa' } } },
         scales: {
-          x: { ticks: { color: '#9aa0a6' }, grid: { color: '#2a2e37' } },
-          y: { ticks: { color: '#9aa0a6' }, grid: { color: '#2a2e37' } },
+          x: { ticks: { color: '#aebfd4' }, grid: { color: '#1f3d61' } },
+          y: { ticks: { color: '#aebfd4' }, grid: { color: '#1f3d61' } },
         },
       },
       plugins: [promiseLinePlugin],
