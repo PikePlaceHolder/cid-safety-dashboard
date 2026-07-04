@@ -316,6 +316,7 @@ async function renderDashboard(env) {
   const crimeData = JSON.stringify(rows.map((r) => r.crime_count));
   const terryData = JSON.stringify(rows.map((r) => r.terry_stop_count));
   const cfsOnviewData = JSON.stringify(rows.map((r) => r.cfs_onview));
+  const cfsOtherData = JSON.stringify(rows.map((r) => (r.cfs_total ?? 0) - (r.cfs_onview ?? 0)));
   const cameraNames = (cameraNamesResult.results ?? []).map((r) => r.camera_name);
   const cameraOptions = cameraNames
     .map((n) => `<option value="${n}">${n.replace(/_/g, " ")}</option>`)
@@ -391,7 +392,15 @@ async function renderDashboard(env) {
     </div>
   </div>
 
-  <div class="section chart-wrap"><canvas id="trendChart"></canvas></div>
+  <div class="section">
+    <h2>Crime reports &amp; Terry stops</h2>
+    <div class="chart-wrap"><canvas id="crimeStopsChart"></canvas></div>
+  </div>
+
+  <div class="section">
+    <h2>Calls for service — on-view vs. other</h2>
+    <div class="chart-wrap"><canvas id="callsChart"></canvas></div>
+  </div>
 
   <div class="section">
     <h2>Latest camera snapshots</h2>
@@ -482,7 +491,12 @@ async function renderDashboard(env) {
   </script>
 
   <script>
-    const ctx = document.getElementById('trendChart');
+    const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    function fmtAxisDate(isoDay) {
+      const [, m, d] = isoDay.split('-');
+      return MONTHS[parseInt(m, 10) - 1] + '-' + d;
+    }
+
     const promiseLinePlugin = {
       id: 'promiseLine',
       afterDraw(chart) {
@@ -507,24 +521,54 @@ async function renderDashboard(env) {
         c.restore();
       },
     };
-    new Chart(ctx, {
+
+    const sharedScales = {
+      x: {
+        ticks: {
+          color: '#aebfd4',
+          callback: function (value) { return fmtAxisDate(this.getLabelForValue(value)); },
+        },
+        grid: { color: '#1f3d61' },
+      },
+      y: { ticks: { color: '#aebfd4' }, grid: { color: '#1f3d61' } },
+    };
+    const sharedPlugins = {
+      legend: { labels: { color: '#f5f7fa' } },
+      tooltip: { callbacks: { title: (items) => fmtAxisDate(items[0].label) } },
+    };
+
+    new Chart(document.getElementById('crimeStopsChart'), {
       type: 'line',
       data: {
         labels: ${labels},
         datasets: [
           { label: 'Crime reports (SPD, daily)', data: ${crimeData}, borderColor: '#c8102e', backgroundColor: '#c8102e', tension: 0.25 },
           { label: 'Terry stops (on-view contacts)', data: ${terryData}, borderColor: '#aebfd4', backgroundColor: '#aebfd4', tension: 0.25 },
-          { label: 'CFS on-view calls', data: ${cfsOnviewData}, borderColor: '#d4af37', backgroundColor: '#d4af37', tension: 0.25 },
         ],
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { labels: { color: '#f5f7fa' } } },
-        scales: {
-          x: { ticks: { color: '#aebfd4' }, grid: { color: '#1f3d61' } },
-          y: { ticks: { color: '#aebfd4' }, grid: { color: '#1f3d61' } },
-        },
+        plugins: sharedPlugins,
+        scales: sharedScales,
+      },
+      plugins: [promiseLinePlugin],
+    });
+
+    new Chart(document.getElementById('callsChart'), {
+      type: 'line',
+      data: {
+        labels: ${labels},
+        datasets: [
+          { label: 'CFS on-view calls', data: ${cfsOnviewData}, borderColor: '#d4af37', backgroundColor: '#d4af37', tension: 0.25 },
+          { label: 'CFS other calls', data: ${cfsOtherData}, borderColor: '#5b8fc7', backgroundColor: '#5b8fc7', tension: 0.25 },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: sharedPlugins,
+        scales: sharedScales,
       },
       plugins: [promiseLinePlugin],
     });
